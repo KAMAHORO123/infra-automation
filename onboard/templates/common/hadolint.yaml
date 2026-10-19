@@ -1,0 +1,7 @@
+# Hadolint configuration (Dockerfile linter), used locally and in CI.
+failure-threshold: warning
+ignored:
+  # DL3018 "pin versions in apk add": Alpine removes superseded package versions
+  # from its mirrors, so exact apk pins break builds within weeks. We pin the
+  # base image by digest instead and rely on Trivy to flag vulnerable packages.
+  - DL3018

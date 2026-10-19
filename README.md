@@ -22,3 +22,21 @@ Then wait for Argo CD: UAT and staging sync automatically; production waits
 for a manual Sync. Sealed secrets only decrypt with the cluster key they were
 sealed for, so a brand-new cluster needs them re-sealed (or the key restored
 from backup).
+
+## Onboard another application (one command)
+
+```bash
+onboard/onboard-app.sh --name orders-api --type nestjs \
+  --app-dir ~/code/orders-api --config-dir ../rssb-config [--port 3000] [--database]
+```
+
+Adds a hardened Dockerfile, security-gated CI/CD workflows and Dependabot to the
+app repo, and `apps/<name>/values*.yaml` to the config repo. The ApplicationSets
+deploy every `apps/*` folder to uat, staging and production automatically.
+
+## Other scripts
+
+| Script | Use |
+|---|---|
+| `reset-env.sh uat\|staging` | Recreate an environment's database; migrations and seed data run again through Argo CD |
+| `preload-images.sh [IMAGE…]` | Download images once and copy them into every node (slow links) |
