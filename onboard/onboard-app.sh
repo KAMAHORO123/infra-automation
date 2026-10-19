@@ -97,6 +97,7 @@ A="$CONFIG_DIR/apps/$NAME"; mkdir -p "$A"
   echo "  path: /"
   echo "  pathType: Prefix"
 } > "$A/values.yaml"
+echo "  created  apps/$NAME/values.yaml"
 for env in uat staging prod; do
   host="$NAME-$env.$DOMAIN"
   {
@@ -111,7 +112,7 @@ for env in uat staging prod; do
     fi
     printf "\ningress:\n  host: %s\n" "$host"
   } > "$A/values-$env.yaml"
-  echo "  created  apps/$NAME/values-$env.yaml  (https host: $host)"
+  echo "  created  apps/$NAME/values-$env.yaml  (http://$host)"
 done
 
 cat <<EOF
