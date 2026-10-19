@@ -42,6 +42,13 @@ kubectl -n metallb-system create configmap config --dry-run=client -o yaml \
 ' | kubectl apply -f -
 kubectl -n metallb-system rollout restart deploy/controller
 kubectl -n ingress-nginx patch svc ingress-nginx-controller -p '{"spec":{"type":"LoadBalancer"}}'
+
+# Keep ordinary workloads off the single control-plane node so the API server
+# keeps its CPU/memory (Argo CD + monitoring starved it otherwise). The ingress
+# controller is pinned to this node by minikube, so it tolerates the taint.
+kubectl taint node rssb node-role.kubernetes.io/control-plane=:NoSchedule --overwrite
+kubectl -n ingress-nginx patch deploy ingress-nginx-controller --type json -p \
+  '[{"op":"add","path":"/spec/template/spec/tolerations","value":[{"key":"node-role.kubernetes.io/control-plane","operator":"Exists","effect":"NoSchedule"}]}]'
 kubectl -n ingress-nginx rollout status deploy/ingress-nginx-controller --timeout=1200s
 
 # 4. Reach the ingress from the Mac (cluster IPs live inside Docker's VM).
