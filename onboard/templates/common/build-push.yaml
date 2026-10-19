@@ -153,7 +153,9 @@ jobs:
 
   promote:
     needs: [prepare, publish]
-    if: always() && needs.prepare.result == 'success' && contains(fromJSON('["success", "skipped"]'), needs.publish.result)
+    # Promote only an image that exists: reused (build == false) or freshly
+    # published. "publish skipped" alone also happens when the BUILD FAILED.
+    if: always() && needs.prepare.result == 'success' && (needs.prepare.outputs.build == 'false' || needs.publish.result == 'success')
     runs-on: ubuntu-24.04
     env:
       ENVIRONMENT: ${{ needs.prepare.outputs.environment }}
