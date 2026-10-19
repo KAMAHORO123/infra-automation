@@ -20,6 +20,12 @@ DB_CONTAINER=rssb-pilot-app-postgres-1
 # 1. The 3 nodes ("VMs").
 minikube start -p rssb --nodes 3 --cni=calico --memory=2900 --cpus=2 --subnet="$SUBNET"
 kubectl config use-context rssb
+
+# Nodes are Docker containers: raise their CPU/memory CAPS (not reservations)
+# so busy moments (Argo CD + monitoring starting) do not starve the API server.
+for node in rssb rssb-m02 rssb-m03; do
+  docker update --cpus 3 --memory 3300m --memory-swap 3300m "$node" > /dev/null
+done
 kubectl wait --for=condition=Ready nodes --all --timeout=900s
 
 # 2. External shared database (proposal 4.2), on the same network as the nodes.

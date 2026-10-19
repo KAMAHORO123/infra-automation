@@ -37,6 +37,9 @@ kubectl -n argocd patch configmap argocd-cm --patch-file "$(dirname "$0")/argocd
 kubectl -n argocd patch configmap argocd-rbac-cm --patch-file "$(dirname "$0")/argocd-rbac-cm-patch.yaml"
 kubectl -n argocd patch configmap argocd-notifications-cm --patch-file "$(dirname "$0")/argocd-notifications-cm-patch.yaml"
 kubectl -n argocd rollout restart statefulset/argocd-application-controller
+# Dex provides SSO; with local accounts it only costs resources. RSSB would
+# enable it and connect its identity provider (proposal 8.2 [CONFIRM]).
+kubectl -n argocd scale deploy argocd-dex-server --replicas=0
 
 # Demo account passwords: generated once, bcrypt-hashed into Argo CD's own
 # secret, plain text only in the private backup folder (never in Git).
