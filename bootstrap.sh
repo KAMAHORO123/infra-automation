@@ -35,6 +35,7 @@ kubectl apply --server-side --force-conflicts \
 # EndpointSlices, demo accounts, and who may sync which environment.
 kubectl -n argocd patch configmap argocd-cm --patch-file "$(dirname "$0")/argocd-cm-patch.yaml"
 kubectl -n argocd patch configmap argocd-rbac-cm --patch-file "$(dirname "$0")/argocd-rbac-cm-patch.yaml"
+kubectl -n argocd patch configmap argocd-notifications-cm --patch-file "$(dirname "$0")/argocd-notifications-cm-patch.yaml"
 kubectl -n argocd rollout restart statefulset/argocd-application-controller
 
 # Demo account passwords: generated once, bcrypt-hashed into Argo CD's own

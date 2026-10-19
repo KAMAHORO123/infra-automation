@@ -1,0 +1,41 @@
+# Argo CD notifications (proposal 8.2): tell people when a sync fails, an app
+# becomes unhealthy, or a new version is deployed. The channel is a webhook;
+# point the URL at Slack/Teams/e-mail gateway once RSSB confirms the channel.
+data:
+  service.webhook.rssb-alerts: |
+    url: http://notification-receiver.argocd.svc:8080/
+    headers:
+      - name: Content-Type
+        value: application/json
+  template.app-sync-failed: |
+    webhook:
+      rssb-alerts:
+        method: POST
+        body: |
+          {"event": "sync-failed", "app": "{{.app.metadata.name}}", "revision": "{{.app.status.operationState.syncResult.revision}}", "message": {{toJson .app.status.operationState.message}}}
+  template.app-health-degraded: |
+    webhook:
+      rssb-alerts:
+        method: POST
+        body: |
+          {"event": "health-degraded", "app": "{{.app.metadata.name}}", "health": "{{.app.status.health.status}}"}
+  template.app-deployed: |
+    webhook:
+      rssb-alerts:
+        method: POST
+        body: |
+          {"event": "deployed", "app": "{{.app.metadata.name}}", "revision": "{{.app.status.sync.revision}}", "images": {{toJson .app.status.summary.images}}}
+  trigger.on-sync-failed: |
+    - when: app.status.operationState != nil and app.status.operationState.phase in ['Error', 'Failed']
+      send: [app-sync-failed]
+  trigger.on-health-degraded: |
+    - when: app.status.health.status == 'Degraded'
+      send: [app-health-degraded]
+  trigger.on-deployed: |
+    - when: app.status.operationState != nil and app.status.operationState.phase in ['Succeeded'] and app.status.health.status == 'Healthy'
+      oncePer: app.status.sync.revision
+      send: [app-deployed]
+  # Every application, without per-app annotations.
+  subscriptions: |
+    - recipients: [rssb-alerts]
+      triggers: [on-sync-failed, on-health-degraded, on-deployed]
