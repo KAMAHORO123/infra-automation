@@ -31,9 +31,23 @@ fi
 kubectl apply --server-side --force-conflicts \
   -f "https://github.com/bitnami-labs/sealed-secrets/releases/download/${SEALED_SECRETS_VERSION}/controller.yaml"
 
-# Our settings on top of the defaults (see argocd-cm-patch.yaml).
+# Our settings on top of the defaults (see argocd-*-patch.yaml): managed
+# EndpointSlices, demo accounts, and who may sync which environment.
 kubectl -n argocd patch configmap argocd-cm --patch-file "$(dirname "$0")/argocd-cm-patch.yaml"
+kubectl -n argocd patch configmap argocd-rbac-cm --patch-file "$(dirname "$0")/argocd-rbac-cm-patch.yaml"
 kubectl -n argocd rollout restart statefulset/argocd-application-controller
+
+# Demo account passwords: generated once, bcrypt-hashed into Argo CD's own
+# secret, plain text only in the private backup folder (never in Git).
+USERS_FILE="$HOME/.rssb-backup/argocd-demo-users.txt"
+mkdir -p "$(dirname "$USERS_FILE")" && chmod 700 "$(dirname "$USERS_FILE")"
+[ -f "$USERS_FILE" ] || for u in developer qa; do echo "$u $(openssl rand -hex 8)"; done > "$USERS_FILE"
+chmod 600 "$USERS_FILE"
+while read -r user pass; do
+  hash=$(htpasswd -nbBC 10 "" "$pass" | tr -d ':\n')
+  kubectl -n argocd patch secret argocd-secret --type merge -p \
+    "{\"stringData\":{\"accounts.$user.password\":\"$hash\",\"accounts.$user.passwordMtime\":\"$(date -u +%FT%TZ)\"}}"
+done < "$USERS_FILE"
 
 kubectl -n argocd rollout status deploy/argocd-server --timeout=1800s
 kubectl -n argocd rollout status deploy/argocd-repo-server --timeout=1800s

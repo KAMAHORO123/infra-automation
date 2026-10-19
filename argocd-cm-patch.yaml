@@ -1,6 +1,10 @@
 # Argo CD settings that differ from the defaults (applied by bootstrap.sh).
 # Copied from the v3.5.5 defaults with one change: EndpointSlice is managed.
 data:
+  # Local demo accounts (passwords set by bootstrap.sh, never stored in Git).
+  # In RSSB these would come from SSO instead (proposal 8.2).
+  accounts.developer: login
+  accounts.qa: login
   resource.exclusions: |
     ### RSSB: EndpointSlice is NOT excluded, so the platform app can manage the
     ### hand-written slices that point at the external PostgreSQL (cluster/external-postgres.yaml).

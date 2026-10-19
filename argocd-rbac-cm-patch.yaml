@@ -1,0 +1,15 @@
+# Argo CD permissions (applied by bootstrap.sh). Format: p, <role>, <resource>,
+# <action>, <project>/<application>, allow|deny. Unlisted = denied.
+data:
+  policy.default: ""
+  policy.csv: |
+    # Developers: see every RSSB app, read logs, sync only UAT.
+    p, role:developer, applications, get,  rssb/*,       allow
+    p, role:developer, logs,         get,  rssb/*,       allow
+    p, role:developer, applications, sync, rssb/*-uat,   allow
+    # QA testers: see every RSSB app, sync only staging.
+    p, role:qa,        applications, get,  rssb/*,       allow
+    p, role:qa,        applications, sync, rssb/*-staging, allow
+    # Production sync stays with platform admins (built-in role:admin).
+    g, developer, role:developer
+    g, qa,        role:qa
