@@ -1,5 +1,7 @@
 # rssb-infra
 
+**Start here:** [docs/WALKTHROUGH.md](docs/WALKTHROUGH.md) explains every repo and how to test each part.
+
 How the RSSB platform simulation is built (proposal 6, 7.4). In production this
 repo would hold Terraform (VMs) and Ansible (MicroK8s); locally, minikube plays
 the three VMs.
