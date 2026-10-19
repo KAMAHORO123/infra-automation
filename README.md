@@ -6,7 +6,7 @@ the three VMs.
 
 | File | Stage (proposal 6.2) | What it does |
 |---|---|---|
-| `cluster-up.sh` | 1-3 Machines, cluster, add-ons | Starts external PostgreSQL and the 3-node HA minikube cluster, repairs node networking after restarts, restores MetalLB and the ingress LoadBalancer, opens the ingress on :8081 |
+| `cluster-up.sh` | 1-3 Machines, cluster, add-ons | Creates or starts the 3-node cluster (1 control plane + 2 workers, pinned subnet), attaches external PostgreSQL, restores MetalLB and the ingress LoadBalancer, opens the ingress on :8081 |
 | `bootstrap.sh` | 4 Bootstrap | Installs pinned Argo CD and Sealed Secrets, applies our Argo CD settings, then the root application |
 | `root-app.yaml` | 4 Bootstrap | The only object applied by hand: Argo CD reads `argocd/` in rssb-config and builds everything else |
 | `argocd-cm-patch.yaml` | 4 Bootstrap | Argo CD settings that differ from the defaults (EndpointSlices are managed) |

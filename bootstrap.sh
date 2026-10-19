@@ -15,7 +15,18 @@ kubectl create namespace argocd --dry-run=client -o yaml | kubectl apply -f -
 kubectl apply -n argocd --server-side --force-conflicts \
   -f "https://raw.githubusercontent.com/argoproj/argo-cd/${ARGOCD_VERSION}/manifests/install.yaml"
 
-# 2. Sealed Secrets controller: decrypts SealedSecrets committed to Git into
+# 2. Restore the sealing key BEFORE the controller starts, so it reuses it and
+#    every SealedSecret already in Git still decrypts. Without the backup a new
+#    cluster generates a new key and all secrets must be re-sealed.
+#    The backup lives outside Git: ~/.rssb-backup/sealed-secrets-key.yaml
+KEY_BACKUP="${SEALED_SECRETS_KEY_BACKUP:-$HOME/.rssb-backup/sealed-secrets-key.yaml}"
+if [ -f "$KEY_BACKUP" ]; then
+  kubectl apply -f "$KEY_BACKUP"
+else
+  echo "No sealing key backup at $KEY_BACKUP: secrets in Git will need re-sealing." >&2
+fi
+
+#    Sealed Secrets controller: decrypts SealedSecrets committed to Git into
 #    normal Secrets, using a private key that never leaves the cluster.
 kubectl apply --server-side --force-conflicts \
   -f "https://github.com/bitnami-labs/sealed-secrets/releases/download/${SEALED_SECRETS_VERSION}/controller.yaml"
@@ -24,10 +35,10 @@ kubectl apply --server-side --force-conflicts \
 kubectl -n argocd patch configmap argocd-cm --patch-file "$(dirname "$0")/argocd-cm-patch.yaml"
 kubectl -n argocd rollout restart statefulset/argocd-application-controller
 
-kubectl -n argocd rollout status deploy/argocd-server --timeout=1200s
-kubectl -n argocd rollout status deploy/argocd-repo-server --timeout=1200s
-kubectl -n argocd rollout status statefulset/argocd-application-controller --timeout=1200s
-kubectl -n kube-system rollout status deploy/sealed-secrets-controller --timeout=1200s
+kubectl -n argocd rollout status deploy/argocd-server --timeout=1800s
+kubectl -n argocd rollout status deploy/argocd-repo-server --timeout=1800s
+kubectl -n argocd rollout status statefulset/argocd-application-controller --timeout=1800s
+kubectl -n kube-system rollout status deploy/sealed-secrets-controller --timeout=1800s
 
 # 3. The root application ("app of apps"): Argo CD reads argocd/ in the config
 #    repo, which in turn defines everything else.

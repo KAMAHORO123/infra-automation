@@ -1,36 +1,38 @@
 #!/usr/bin/env bash
-# Start the local RSSB platform simulation after a reboot or `minikube stop`.
+# Create or start the local RSSB platform simulation (stages 1-3 of proposal 6.2).
 #
 #   ./cluster-up.sh
 #
-# Then open http://uat.127.0.0.1.nip.io:8081
+# Then run ./bootstrap.sh once on a new cluster, and open
+# http://uat.127.0.0.1.nip.io:8081
+#
+# Layout: 1 control plane + 2 workers. RSSB's real cluster has 3 control-plane
+# nodes (proposal 6.3); on a 16 GB laptop three API servers + three etcd copies
+# left too little for Argo CD and monitoring, so the simulation keeps 3 nodes
+# for spreading/draining apps but runs a single control plane.
 set -euo pipefail
 
 APP_DIR="$(cd "$(dirname "$0")/../rssb-pilot-app" && pwd)"
+SUBNET=192.168.58.0/24   # pinned: Git refers to .50 (PostgreSQL) and .200-.210 (MetalLB)
+DB_IP=192.168.58.50
+DB_CONTAINER=rssb-pilot-app-postgres-1
 
-# 1. External shared database (proposal 4.2). It is attached to the cluster
-#    network at 192.168.58.50; that attachment survives container restarts.
-docker compose -f "$APP_DIR/docker-compose.yml" start postgres
-
-# 2. The 3-node HA cluster. minikube defaults to --leader-elect=false, which is
-#    wrong with 3 control planes (all controllers act at once), so force it on.
-minikube start -p rssb \
-  --extra-config=controller-manager.leader-elect=true \
-  --extra-config=scheduler.leader-elect=true
-
+# 1. The 3 nodes ("VMs").
+minikube start -p rssb --nodes 3 --cni=calico --memory=2900 --cpus=2 --subnet="$SUBNET"
 kubectl config use-context rssb
-kubectl wait --for=condition=Ready nodes --all --timeout=600s
+kubectl wait --for=condition=Ready nodes --all --timeout=900s
 
-# 3. After a restart, kube-proxy can come up before the control-plane VIP
-#    answers and never write its rules (pods stuck "Unknown", Calico failing to
-#    reach 10.96.0.1). Restart it first, then Calico, in that order.
-kubectl -n kube-system rollout restart ds/kube-proxy
-kubectl -n kube-system rollout status ds/kube-proxy --timeout=600s
-kubectl -n kube-system rollout restart ds/calico-node
-kubectl -n kube-system rollout status ds/calico-node --timeout=900s
+# 2. External shared database (proposal 4.2), on the same network as the nodes.
+docker compose -f "$APP_DIR/docker-compose.yml" start postgres
+if ! docker inspect "$DB_CONTAINER" --format '{{json .NetworkSettings.Networks}}' | grep -q '"rssb"'; then
+  docker network connect --ip "$DB_IP" rssb "$DB_CONTAINER"
+fi
 
-# 4. minikube re-applies addon defaults on every start: restore the MetalLB
-#    address pool and expose the ingress controller through it.
+# 3. Add-ons (proposal 6.4). minikube re-applies their defaults on every start,
+#    so the MetalLB pool and the ingress LoadBalancer are restored each time.
+minikube -p rssb addons enable metrics-server
+minikube -p rssb addons enable metallb
+minikube -p rssb addons enable ingress || true   # slow image pulls can time out its check
 kubectl -n metallb-system create configmap config --dry-run=client -o yaml \
   --from-literal=config='address-pools:
 - name: default
@@ -40,8 +42,8 @@ kubectl -n metallb-system create configmap config --dry-run=client -o yaml \
 ' | kubectl apply -f -
 kubectl -n metallb-system rollout restart deploy/controller
 kubectl -n ingress-nginx patch svc ingress-nginx-controller -p '{"spec":{"type":"LoadBalancer"}}'
-kubectl -n ingress-nginx rollout status deploy/ingress-nginx-controller --timeout=900s
+kubectl -n ingress-nginx rollout status deploy/ingress-nginx-controller --timeout=1200s
 
-# 5. Reach the ingress from the Mac (cluster IPs live inside Docker's VM).
+# 4. Reach the ingress from the Mac (cluster IPs live inside Docker's VM).
 echo "Ingress on http://uat.127.0.0.1.nip.io:8081  (Ctrl+C to stop)"
 kubectl -n ingress-nginx port-forward svc/ingress-nginx-controller 8081:80
