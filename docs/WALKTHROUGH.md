@@ -1,257 +1,195 @@
-# RSSB platform simulation — walkthrough and test guide
+# RSSB platform lab: presentation guide
 
-This guide explains every part of the simulation of the RSSB *Automated Development
-and Test Environment* proposal and shows how to test each one yourself. Every
-command was run on the reference setup (MacBook, 16 GB RAM, Docker Desktop with
-6 CPUs / 10 GB, minikube with the docker driver).
+How to start the lab, what each part is, and a step-by-step live demonstration of
+plan v3.2 with every success criterion (S1–S8). Every command and every number below
+was run and measured on this lab (MacBook, 16 GB RAM, Docker Desktop 10 GB / 6 CPUs).
 
-## 1. The four folders
+---
 
-| Folder (GitHub repo) | Proposal | What it holds |
+## 1. The repositories (who owns what)
+
+| Repo | Plan v3.2 name | Holds | Branches |
+|---|---|---|---|
+| [rssb-pilot-app](https://github.com/KAMAHORO123/rssb-pilot-app) | app repo | NestJS backend + Next.js frontend, Dockerfiles, two ~25-line caller workflows | `develop` → `staging` → `main` |
+| [rssb-hello-api](https://github.com/KAMAHORO123/rssb-hello-api) | app repo | Second app, onboarded with one command | same |
+| [rssb-devops](https://github.com/KAMAHORO123/rssb-devops) | central DevOps repo | Reusable workflows (security gates, build once, digest promotion), Dockerfile templates, `onboard-app.sh`; released as tags (`v1.1.0`) | `main` + tags |
+| [platform-gitops](https://github.com/KAMAHORO123/platform-gitops) | `platform-gitops` | `bootstrap/` (Argo CD, Sealed Secrets, root app), `apps/<app>/base` + `envs/{uat,staging,prod}`, `infra/` | `main` only |
+| [infra-automation](https://github.com/KAMAHORO123/infra-automation) | `infra-automation` | Cluster scripts (stand-in for the Ansible MicroK8s role), this guide | `main` only |
+
+```
+developer ─PR─▶ rssb-pilot-app ──calls──▶ rssb-devops workflows (gates, build, sign)
+                     │ merge                       │ push image          │ commit digest
+                     ▼                             ▼                     ▼
+               (develop/staging/main)            GHCR            platform-gitops (Git = truth)
+                                                   ▲ pull                 ▲ watch
+                                                   └──── Argo CD in the cluster ────┘
+                                       uat (auto) · staging (auto) · production (manual Sync)
+```
+
+**Key idea for the audience:** the app pipeline never touches the cluster. It only
+writes one line per image (a digest) into the GitOps repo. Argo CD pulls.
+
+---
+
+## 2. Before the presentation (30 minutes before)
+
+```bash
+cd ~/Desktop/rssb/infra-automation
+./cluster-up.sh                  # terminal 1: keep open (it is the tunnel to the apps)
+```
+It ends with `Forwarding from 127.0.0.1:8081`. Then, in a second terminal:
+
+```bash
+kubectl get nodes                                    # rssb, rssb-m02, rssb-m03: Ready
+kubectl -n argocd get applications                   # all Synced / Healthy
+kubectl -n argocd port-forward svc/argocd-server 8443:443        # terminal 3: Argo CD UI
+./monitoring.sh on               # ONLY if you will show Grafana; give it 10 minutes
+```
+
+| Open | URL | Login |
 |---|---|---|
-| `rssb-pilot-app` | 4.1 pilot app, 7.2 app repo | NestJS backend + Next.js frontend, Dockerfiles, CI/CD workflows |
-| `rssb-config` | 7.3 config repo | Generic Helm chart, values per app and environment, cluster rules, Argo CD definitions, sealed secrets |
-| `rssb-infra` | 6, 7.4 infra repo | Cluster start-up, GitOps bootstrap, onboarding tool, reset and preload scripts |
-| `rssb-hello-api` | 3 objective 9 | A second app onboarded with one command (proof of the migration tool) |
-| `k8s-raw` (local only) | — | The Phase 2 hand-written YAML, kept for learning; replaced by the Helm chart |
+| UAT / staging / production | http://uat.127.0.0.1.nip.io:8081 · `staging.` · `prod.` | UAT & staging: `admin@example.com` / `Admin12345!` (production has no demo users, by design) |
+| Argo CD | https://localhost:8443 (accept the certificate warning) | `cat ~/.rssb-backup/argocd-admin.txt` → user `admin`; demo users in `~/.rssb-backup/argocd-demo-users.txt` |
+| Grafana (if on) | `kubectl -n monitoring port-forward svc/monitoring-grafana 3000:80` → http://localhost:3000 | `cat ~/.rssb-backup/grafana-admin.txt` |
 
-Private, never in Git: `~/.rssb-backup/` (sealed-secrets key, Argo CD and Grafana passwords).
+Argo CD has **no sign-up page** on purpose: accounts are created by the platform team
+(`admin`, `developer`, `qa`); at RSSB they would come from SSO.
 
-## 2. How a change travels (the whole flow)
+---
 
-```
-developer ── PR ──▶ develop ──▶ CI: test, Gitleaks, CodeQL, Hadolint, Trivy (PR checks)
-                      │ merge
-                      ▼
-            build amd64+arm64 ─▶ Trivy gate ─▶ push GHCR ─▶ Cosign sign
-                      │
-                      ▼ rssb-ci-bot commits tag to rssb-config/apps/*/values-uat.yaml
-            Argo CD syncs UAT automatically (PreSync: migrations + seed)
-                      │ PR develop → qa, merge
-                      ▼ no rebuild: same image (git tree hash), tag → values-staging.yaml
-            Argo CD syncs staging automatically
-                      │ PR qa → main, merge
-                      ▼ bot pushes promote/production/<tag>; rssb-config opens a PR
-            human reviews + merges (gate 1) ─▶ Argo CD OutOfSync ─▶ human presses Sync (gate 2)
-```
+## 3. The live demonstration
 
-## 3. Start everything
+Each step: **say** (one sentence), **do**, **show**.
 
+### Step 1 — One cluster, three environments
+- **Say:** "Three machines replace dozens of VMs; UAT, staging and production are namespaces on them."
+- **Do:** `kubectl get nodes` · `kubectl get pods -n uat -o wide` (NODE column) · `kubectl get ns -L pod-security.kubernetes.io/enforce`
+- **Show:** pods spread over nodes; namespaces enforce `restricted` (no root containers).
+
+### Step 2 — Git is the source of truth (Argo CD)
+- **Do:** log in to Argo CD as `admin`. Click `rssb-pilot-backend-uat` → the tree: SealedSecret (wave −2) → migration Job (wave −1) → Deployment → Pods.
+- **Show:** `rssb-pilot-backend-prod` has no automatic sync: production changes only when a person presses SYNC.
+- **Do:** log out, log in as `developer`. Try SYNC on a `*-prod` app → **permission denied**; on `*-uat` → allowed.
+
+### Step 3 — A developer makes a change (S3: security gates)
 ```bash
-cd ~/Desktop/rssb/rssb-infra
-./cluster-up.sh            # terminal 1; ends by port-forwarding the ingress on :8081
-./bootstrap.sh             # terminal 2; only on a brand-new cluster
+cd ~/Desktop/rssb/rssb-pilot-app
+git checkout develop && git pull
+git checkout -b feature/new-headline
+# edit frontend/src/components/landing/landing-hero.tsx, line 24:
+#   Shipment operations, simplified.   ->   Shipment operations, by RSSB.
+git commit -am "Change landing headline" && git push -u origin feature/new-headline
+gh pr create --base develop --title "Change landing headline" --body "Demo change"
+```
+- **Show:** the PR's **Checks** tab: `secrets` + `dockerfile-lint` → `sast` (Semgrep) + `dependencies` (Trivy fs) + `test` → `image-scan` (Trivy, HIGH/CRITICAL block) → `all-checks-passed`. All run from the central repo, pinned to `@v1.0.1`.
+
+### Step 4 — Merge → UAT updates itself (S1)
+- **Do:** merge the PR on GitHub (green button).
+- **Show:** Actions → **Delivery**: `build` ×6 (amd64 + arm64), `publish` ×3 (signed), `deploy`.
+  Then platform-gitops → Commits: `rssb-ci-bot | Deploy tree-… to uat` changing **only digest lines in `envs/uat`**.
+  Then Argo CD: `rssb-pilot-frontend-uat` syncs. Refresh http://uat.127.0.0.1.nip.io:8081 → new headline.
+- **Measured:** merge → UAT live in about 6–10 minutes (build ~3 min, image download on a slow line is the rest).
+
+### Step 5 — Promote to staging: same image, no rebuild (S2)
+- **Do:** `gh pr create --base staging --head develop --title "Release to staging"`, merge when green.
+- **Show:** Delivery on `staging`: **build and publish skipped**, only `deploy`. Compare digests:
+  ```bash
+  cd ~/Desktop/rssb/platform-gitops && git pull
+  grep digest apps/rssb-pilot-frontend/envs/uat/kustomization.yaml apps/rssb-pilot-frontend/envs/staging/kustomization.yaml
+  ```
+  identical — QA tests the exact bytes UAT saw. **Measured:** 72 s from merge to staging live.
+
+### Step 6 — Production: two human gates (D18 + manual Sync)
+- **Do:** `gh pr create --base main --head staging --title "Release to production"`, merge when green.
+- **Show:** Actions → Delivery → **Review deployments** → the job waits for the `production` Environment. Click **Approve**.
+- **Show:** Argo CD → `*-prod` apps turn **OutOfSync**. Click **SYNC** (with prune) → production updates.
+- **Measured:** production rollout ~2 min, **0 failed requests out of 551** during it (2 copies + PodDisruptionBudget).
+
+### Step 7 — Rollback in seconds (S7)
+```bash
+cd ~/Desktop/rssb/platform-gitops && git pull
+git log --oneline -5                       # find "Deploy tree-… to staging"
+git checkout -b rollback/demo && git revert --no-edit <that commit>
+git push -u origin rollback/demo && gh pr create --base main --title "Rollback staging" --body "git revert"
+```
+Merge → staging returns to the previous version. **Measured: 47 s** (target < 5 min).
+
+### Step 8 — Zero downtime (S4) and self-healing
+- **Measured:** 3 rollouts (release, rollback, roll forward) under continuous load: **4,062 requests, 0 failures**.
+- **Do (self-heal):** `kubectl -n uat delete pod -l app.kubernetes.io/name=rssb-pilot-backend` → replaced in seconds.
+- **Do (drift):** `kubectl -n uat scale deploy rssb-pilot-backend --replicas=3` → Argo CD sets it back to 1 within ~15 s.
+
+### Step 9 — Security inside the cluster
+```bash
+# Only the backend may reach the database; the frontend may not:
+kubectl -n uat exec deploy/rssb-pilot-frontend -- node -e "require('net').connect({host:'192.168.58.50',port:5432,timeout:3000}).on('timeout',()=>{console.log('BLOCKED');process.exit()}).on('connect',()=>{console.log('OPEN');process.exit()})"
+# RBAC, asked without doing anything:
+kubectl auth can-i get pods -n production --as alice --as-group rssb:developers    # no
+kubectl auth can-i get secrets -n uat     --as alice --as-group rssb:developers    # no
+# Secrets are encrypted in Git:
+cat ~/Desktop/rssb/platform-gitops/apps/rssb-pilot-backend/envs/uat/backend-secrets.sealed.yaml
 ```
 
-Open in a third terminal as needed:
-
+### Step 10 — Autoscaling (S5)
 ```bash
-kubectl -n argocd port-forward svc/argocd-server 8443:443          # Argo CD UI
-kubectl -n monitoring port-forward svc/monitoring-grafana 3000:80  # Grafana
-```
-
-| What | URL | Login |
-|---|---|---|
-| Pilot app, UAT / staging / production | http://uat.127.0.0.1.nip.io:8081 · http://staging… · http://prod… | UAT/staging: `admin@example.com` / `Admin12345!` (production has no demo users) |
-| Onboarded app | http://rssb-hello-api-uat.127.0.0.1.nip.io:8081 | — |
-| Argo CD | https://localhost:8443 | `~/.rssb-backup/argocd-admin.txt` (admin), `argocd-demo-users.txt` (developer, qa) |
-| Grafana | http://localhost:3000 | `~/.rssb-backup/grafana-admin.txt` |
-
-On a slow line, first-time image downloads take long; `./preload-images.sh IMAGE…`
-downloads once and copies into every node.
-
-## 4. Test it, part by part
-
-Each test: what to run, and what you should see.
-
-### 4.1 Containers (Phase 1)
-
-```bash
-cd ~/Desktop/rssb/rssb-pilot-app && docker compose up -d && open http://localhost:8080
-docker compose exec backend id          # uid=1000(node): not root
-docker compose exec backend which npm   # nothing: npm removed from the runtime image
-```
-
-### 4.2 CI security gates (Phase 5)
-
-Open any PR on GitHub → **Checks** tab. Expected, in stages:
-`secret-scan, dockerfile-lint` → `test, sast` → `image-scan ×3` → `all-checks-passed`.
-
-Prove a gate blocks: on a branch, add a fake key such as
-`AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY` to a file and open a PR.
-**secret-scan fails** and the PR cannot merge. Delete the branch afterwards.
-
-Where results live: Actions tab (logs and graph), Security → Code scanning (CodeQL),
-`image-scan → Trivy report` step (HIGH findings listed, CRITICAL blocks).
-
-### 4.3 Images and signatures
-
-```bash
-docker buildx imagetools inspect ghcr.io/kamahoro123/rssb-pilot-app/backend:tree-42ded8b5d0ed
-#   → linux/amd64 and linux/arm64
-docker run --rm ghcr.io/sigstore/cosign/cosign:v3.1.3 verify \
-  ghcr.io/kamahoro123/rssb-pilot-app/backend:tree-42ded8b5d0ed \
-  --certificate-identity-regexp '^https://github.com/KAMAHORO123/rssb-pilot-app/' \
-  --certificate-oidc-issuer https://token.actions.githubusercontent.com
-#   → "The following checks were performed…": signed by this repo's pipeline
-```
-
-### 4.4 Cluster (Phase 2)
-
-```bash
-kubectl get nodes                       # rssb (control-plane) + rssb-m02 + rssb-m03, Ready
-kubectl top nodes                       # live CPU/RAM (metrics-server)
-kubectl get svc -n ingress-nginx        # EXTERNAL-IP 192.168.58.200 (MetalLB)
-kubectl get ns -L pod-security.kubernetes.io/enforce   # uat/staging/production: restricted
-```
-
-Self-healing: `kubectl -n uat delete pod -l app.kubernetes.io/name=rssb-pilot-backend`
-→ a new pod is Running within seconds.
-
-### 4.5 Helm chart (Phase 3)
-
-```bash
-cd ~/Desktop/rssb/rssb-config
-helm lint --strict charts/generic-app -f apps/rssb-pilot-backend/values.yaml -f apps/rssb-pilot-backend/values-prod.yaml
-helm template rssb-pilot-backend charts/generic-app -n production \
-  -f apps/rssb-pilot-backend/values.yaml -f apps/rssb-pilot-backend/values-prod.yaml | less
-```
-
-Compare `values-uat.yaml` and `values-prod.yaml`: only replicas/autoscaling, PDB,
-hostname, seed and tag differ. One chart, three environments, no copy-paste.
-
-### 4.6 Argo CD (Phase 4)
-
-In the UI: 14 application tiles. Click `rssb-pilot-backend-uat` → tree of
-Deployment → ReplicaSet → Pods, plus Service, Ingress, ConfigMap, migration Job.
-
-- **Drift and self-heal**: `kubectl -n uat scale deploy rssb-pilot-backend --replicas=3`
-  → OutOfSync within seconds, back to 1 within ~15 s.
-- **Production gate**: `*-prod` apps never sync on their own. Change a prod value only
-  through a reviewed PR, then press **SYNC** in the UI.
-- **Rollback**: `git revert` the commit that changed a tag in rssb-config (through a PR);
-  Argo CD restores the previous version.
-- **Permissions**: log in as `developer` → SYNC works on `*-uat`, is denied on `*-staging`
-  and `*-prod`. As `qa` → only `*-staging`.
-
-### 4.7 End-to-end delivery (CI → GitOps)
-
-1. Change something small in rssb-pilot-app on a `feature/*` branch, PR into `develop`, merge.
-2. Watch Actions → **Build and publish**: build ×6, publish ×3, promote.
-3. rssb-config history: `rssb-ci-bot | Deploy tree-… to uat`.
-4. Argo CD: `*-uat` apps sync to the new tag; staging and production do not move.
-5. PR `develop → qa`: the pipeline **skips build** (same tree) and moves only staging.
-6. PR `qa → main`: a PR appears in rssb-config **opened by github-actions**; approve,
-   merge, then SYNC the `*-prod` apps.
-
-### 4.8 Security inside the cluster (Phase 6)
-
-```bash
-# Network policies: only the backend may reach the database; nothing crosses environments.
-kubectl -n uat exec deploy/rssb-pilot-frontend -- node -e \
- "require('net').connect({host:'192.168.58.50',port:5432,timeout:3000}).on('timeout',()=>{console.log('BLOCKED');process.exit()}).on('connect',()=>{console.log('OPEN');process.exit()})"
-#   frontend → BLOCKED;  repeat with deploy/rssb-pilot-backend → OPEN
-
-# RBAC: ask Kubernetes without doing anything.
-kubectl auth can-i get pods -n production --as alice --as-group rssb:developers   # no
-kubectl auth can-i get pods -n uat        --as alice --as-group rssb:developers   # yes
-kubectl auth can-i get secrets -n uat     --as alice --as-group rssb:developers   # no
-
-# Quotas
-kubectl -n production describe resourcequota environment-quota
-
-# Sealed secrets: encrypted in Git, decrypted only in the cluster.
-cat ~/Desktop/rssb/rssb-config/sealed-secrets/backend-secrets-uat.yaml   # unreadable
-kubectl get sealedsecrets -A                                              # SYNCED True
-```
-
-### 4.9 Scaling (Phase 7)
-
-```bash
-# Load the production backend for 2 minutes and watch the HPA add copies (2 → 4).
-H=http://prod.127.0.0.1.nip.io:8081/api/health
+H=http://prod.127.0.0.1.nip.io:8081/login
 ( end=$((SECONDS+120)); seq 1 30 | xargs -P 30 -I{} sh -c "while [ \$SECONDS -lt $end ]; do curl -s -o /dev/null $H; done" ) &
 watch kubectl -n production get hpa,pods
-# VPA advice (never applied automatically):
-kubectl -n production describe vpa rssb-pilot-backend | sed -n '/Recommendation/,$p'
 ```
+The frontend HPA adds copies (2 → 4) and removes them ~5 min after the load stops.
 
-### 4.10 Monitoring and alerts (Phase 8)
+### Step 11 — Monitoring and alerts (if switched on)
+Grafana → Dashboards → *Kubernetes / Compute Resources / Namespace (Pods)* → `production`.
+Alerts from Argo CD: `kubectl -n argocd logs deploy/notification-receiver --tail=30`.
 
-Grafana → Dashboards → **Kubernetes / Compute Resources / Namespace (Pods)** →
-namespace `production`: CPU and memory per pod, the HPA load test is visible.
-Also: *Compute Resources / Cluster*, *Node Exporter / Nodes*, *API server*.
-
-Alerts from Argo CD (deployed, sync failed, degraded):
-
+### Step 12 — Onboarding the next app (one command)
 ```bash
-kubectl -n argocd logs deploy/notification-receiver --tail=50
+~/Desktop/rssb/rssb-devops/scripts/onboard-app.sh --name orders-api --type nestjs \
+  --app-dir ~/code/orders-api --gitops-dir ~/Desktop/rssb/platform-gitops
 ```
+`rssb-hello-api` went through exactly this and runs in all three environments.
 
-Point `service.webhook.rssb-alerts.url` in `argocd-notifications-cm-patch.yaml` at
-RSSB's channel once it is confirmed.
+---
 
-### 4.11 Per-environment data and reset (Phase 9)
+## 4. Evidence (plan v3.2 success criteria)
 
-```bash
-docker exec rssb-pilot-app-postgres-1 psql -U logistics -l | grep logistics_
-#   logistics_uat / _staging / _production, each owned by its own user
-./reset-env.sh staging      # type "staging" to confirm; DB recreated, migrations + seed re-run
-./reset-env.sh production   # refused
-```
-
-### 4.12 Onboarding another app (Phase 10)
-
-```bash
-cd ~/Desktop/rssb
-./rssb-infra/onboard/onboard-app.sh --name orders-api --type nestjs \
-  --app-dir ~/code/orders-api --config-dir ./rssb-config
-```
-
-Then: commit the app repo on a branch, add the `CONFIG_REPO_DEPLOY_KEY` secret, PR the
-config folder, PR the app into develop. `rssb-hello-api` went through exactly this.
-
-### 4.13 Disaster recovery
-
-The cluster was deleted and rebuilt from Git on 2026-10-19:
-
-```bash
-minikube delete -p rssb          # everything inside the cluster is gone
-./cluster-up.sh && ./bootstrap.sh
-```
-
-Argo CD recreated every environment from rssb-config; the restored sealing key
-(`~/.rssb-backup/sealed-secrets-key.yaml`) decrypted all secrets; the external
-database kept all data. Production waited for a manual Sync, as designed.
-
-## 5. Differences from the real RSSB platform
-
-| Real RSSB (proposal) | Simulation | Why |
+| # | Criterion | Result in this lab |
 |---|---|---|
-| 3 MicroK8s VMs, all control plane (6.3) | minikube: 1 control plane + 2 workers | Three API servers + etcd exhausted 16 GB laptop with Argo CD and monitoring |
-| Terraform + Ansible | `cluster-up.sh` + `bootstrap.sh` | Same stages, laptop tooling |
-| Internal DNS names, TLS (cert-manager) | `*.127.0.0.1.nip.io`, plain HTTP, port-forward | No real DNS/certificates on a laptop |
-| SSO for Argo CD (8.2) | Local accounts, Dex off | Identity provider to be confirmed |
-| Alert channel (8.2) | Webhook receiver in the cluster | Channel to be confirmed |
-| Registry mirror (A3) | `preload-images.sh` | Slow internet link |
-| External PostgreSQL servers | Postgres container on the cluster network (192.168.58.50) | Same pattern: outside the cluster, one DB + user per environment |
+| S1 | Merge to develop reaches UAT with no manual step | ✅ every merge in this lab |
+| S2 | Staging/prod run the byte-identical UAT image | ✅ same digest in uat, staging, production |
+| S3 | Critical CVE or leaked secret blocks the pipeline | ✅ Next 14 CRITICAL RCE blocked; fixed by upgrading to 15.5; 0 fixable HIGH/CRITICAL |
+| S4 | Zero-downtime rollout | ✅ 0 / 4,062 requests failed over 3 rollouts; 0 / 551 in production |
+| S5 | Scales out and back in | ✅ HPA 2 → 4 under load |
+| S6 | Survives losing a node | ✅ node drain under load: 205 / 206 (PodDisruptionBudget and preStop since added) |
+| S7 | Rollback < 5 min | ✅ 47 s via `git revert` |
+| S8 | Cluster rebuildable from code | ✅ deleted and rebuilt from Git; sealed-secret key restored from backup |
 
-## 6. Problems met, and what they teach
+Real problems the gates and drills found (good material for questions):
+- Upstream Dockerfiles could never build or start; CI had never built them.
+- A **migration Job without its seed tool** blocked a release: wave −1 stopped wave 0 and UAT kept serving.
+- **Rate limiting behind the ingress was shared by all users** (60 requests/min for everyone) → fixed with `trust proxy` (plan A7).
+- Semgrep found an **nginx h2c-smuggling** risk and a missing **Dependabot cooldown**.
 
-| Problem | Lesson |
+---
+
+## 5. Troubleshooting
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| Browser can't open `*.nip.io:8081` | the tunnel terminal was closed (apps still run) | `kubectl -n ingress-nginx port-forward svc/ingress-nginx-controller 8081:80` |
+| `Cannot connect to the Docker daemon` | Docker Desktop not running | `docker desktop start`, then `./cluster-up.sh` |
+| Everything slow, API timeouts | laptop memory exhausted | `./monitoring.sh off`; keep Docker at 10 GB and nodes at 2.9 GB |
+| New version stuck "Progressing" for minutes | image download on a slow line | wait; check `kubectl get events -A | grep Pull` |
+| Production not updating | by design | press SYNC on the `*-prod` apps in Argo CD |
+
+## 6. Lab versus real RSSB
+
+| RSSB (plan v3.2) | This lab |
 |---|---|
-| Upstream CI green, Dockerfiles broken | CI must build the artifact you deploy |
-| `.dockerignore` at repo root ignored | It is read from the build context root |
-| Login 500: `JWT_ISSUER` missing | Every env var the app reads belongs in the deployment config |
-| `node` user rejected by `runAsNonRoot` | Use numeric UIDs |
-| 4 CRITICAL CVEs, 3 sources | Fix base image, remove runtime tools, update deps; accept with expiry only when unreachable |
-| `digests-backend-*` matched migrator | Glob patterns need unambiguous separators |
-| minikube HA without leader election | HA control planes need leader election |
-| Helm merged two probe handlers | Values files merge maps; defaults must not collide |
-| PreSync Job needed a ConfigMap from Sync | Hooks run before the main phase; depend only on earlier waves |
-| Argo CD ignored EndpointSlices | Know your tool's default exclusions; "Synced" can hide skipped objects |
-| Bot PR never got `validate` | GITHUB_TOKEN events do not trigger workflows; checks belong to commits |
-| Grafana random password = permanent drift | Never let a chart generate secrets under GitOps |
-| Grafana OOMKilled at 256 Mi | Measure, then size limits |
-| API server starved | Keep workloads off the control plane; size for the real load |
-| Edited `bootstrap.sh` while it ran | Bash reads scripts incrementally; never edit a running script |
+| 3 MicroK8s VMs, all control plane (one cluster per site for prod, D6) | minikube: 1 control plane + 2 workers on one laptop |
+| Ansible role in `infra-automation` | `cluster-up.sh` |
+| New Relic (D20) | Prometheus + Grafana, switched on only when shown |
+| FortiADC / nginx proxy hosts as the edge, real DNS + TLS (D7, D19) | port-forward tunnel and `*.127.0.0.1.nip.io` |
+| SSO for Argo CD | local accounts (`admin`, `developer`, `qa`) |
+| PostgreSQL HA on VMs (Patroni) | one Postgres container outside the cluster, one DB + user per environment |
+| Yarn + TypeORM apps (A13, A14) | npm + Prisma pilot |
