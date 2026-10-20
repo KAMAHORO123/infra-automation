@@ -13,7 +13,7 @@ was run and measured on this lab (MacBook, 16 GB RAM, Docker Desktop 10 GB / 6 C
 | [rssb-pilot-app](https://github.com/KAMAHORO123/rssb-pilot-app) | app repo | NestJS backend + Next.js frontend, Dockerfiles, two ~25-line caller workflows | `develop` → `staging` → `main` |
 | [rssb-hello-api](https://github.com/KAMAHORO123/rssb-hello-api) | app repo | Second app, onboarded with one command | same |
 | [rssb-devops](https://github.com/KAMAHORO123/rssb-devops) | central DevOps repo | Reusable workflows (security gates, build once, digest promotion), Dockerfile templates, `onboard-app.sh`; released as tags (`v1.1.0`) | `main` + tags |
-| [platform-gitops](https://github.com/KAMAHORO123/platform-gitops) | `platform-gitops` | `bootstrap/` (Argo CD, Sealed Secrets, root app), `apps/<app>/base` + `envs/{uat,staging,prod}`, `infra/` | `main` only |
+| [platform-gitops](https://github.com/KAMAHORO123/platform-gitops) | `platform-gitops` | `bootstrap/` (Argo CD, Sealed Secrets, root app), `charts/rssb-app` (one Helm chart for all apps), `apps/<app>/values.yaml` + `envs/{uat,staging,prod}/values.yaml`, `infra/` | `main` only |
 | [infra-automation](https://github.com/KAMAHORO123/infra-automation) | `infra-automation` | Cluster scripts (stand-in for the Ansible MicroK8s role), this guide | `main` only |
 
 ```
@@ -70,6 +70,7 @@ Each step: **say** (one sentence), **do**, **show**.
 ### Step 2 — Git is the source of truth (Argo CD)
 - **Do:** log in to Argo CD as `admin`. Click `rssb-pilot-backend-uat` → the tree: SealedSecret (wave −2) → migration Job (wave −1) → Deployment → Pods.
 - **Show:** `rssb-pilot-backend-prod` has no automatic sync: production changes only when a person presses SYNC.
+- **Show (Helm):** app → **DETAILS**: source path `charts/rssb-app`, type **Helm**, two VALUES FILES (the app's and the environment's). **PARAMETERS** tab: the merged values. One chart renders every app; an environment differs only by its values file.
 - **Do:** log out, log in as `developer`. Try SYNC on a `*-prod` app → **permission denied**; on `*-uat` → allowed.
 
 ### Step 3 — A developer makes a change (S3: security gates)
@@ -96,7 +97,7 @@ gh pr create --base develop --title "Change landing headline" --body "Demo chang
 - **Show:** Delivery on `staging`: **build and publish skipped**, only `deploy`. Compare digests:
   ```bash
   cd ~/Desktop/rssb/platform-gitops && git pull
-  grep digest apps/rssb-pilot-frontend/envs/uat/kustomization.yaml apps/rssb-pilot-frontend/envs/staging/kustomization.yaml
+  grep digest apps/rssb-pilot-frontend/envs/uat/values.yaml apps/rssb-pilot-frontend/envs/staging/values.yaml
   ```
   identical — QA tests the exact bytes UAT saw. **Measured:** 72 s from merge to staging live.
 
@@ -128,7 +129,7 @@ kubectl -n uat exec deploy/rssb-pilot-frontend -- node -e "require('net').connec
 kubectl auth can-i get pods -n production --as alice --as-group rssb:developers    # no
 kubectl auth can-i get secrets -n uat     --as alice --as-group rssb:developers    # no
 # Secrets are encrypted in Git:
-cat ~/Desktop/rssb/platform-gitops/apps/rssb-pilot-backend/envs/uat/backend-secrets.sealed.yaml
+grep -A3 sealedSecrets ~/Desktop/rssb/platform-gitops/apps/rssb-pilot-backend/envs/uat/values.yaml
 ```
 
 ### Step 10 — Autoscaling (S5)
@@ -194,3 +195,4 @@ Real problems the gates and drills found (good material for questions):
 | SSO for Argo CD | local accounts (`admin`, `developer`, `qa`) |
 | PostgreSQL HA on VMs (Patroni) | one Postgres container outside the cluster, one DB + user per environment |
 | Yarn + TypeORM apps (A13, A14) | npm + Prisma pilot |
+| Kustomize base + overlays (D9) | one shared Helm chart + a values file per app and environment |
