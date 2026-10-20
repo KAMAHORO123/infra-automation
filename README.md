@@ -7,6 +7,7 @@ cluster itself is built. In RSSB this is the Ansible MicroK8s role (inventories
 | File | Stage (plan 6.2) | What it does |
 |---|---|---|
 | `cluster-up.sh` | 1–3: machines, cluster, add-ons | Creates/starts the 3-node cluster (1 control plane + 2 workers, pinned subnet), attaches the external PostgreSQL, restores MetalLB and the ingress, opens the ingress on :8081 |
+| `webhook-relay.sh` | operations | Relays GitHub push webhooks (via smee.io) to the local Argo CD: sync in seconds instead of ~3-minute polling |
 | `reset-env.sh uat\|staging` | operations | Recreates an environment's database; Argo CD re-runs migrations and seed. Refuses production |
 | `preload-images.sh` | operations | Downloads images once and copies them into every node (slow links; laptop stand-in for a registry mirror) |
 | `docs/WALKTHROUGH.md` | — | **Start here**: how everything fits together and how to demonstrate it |

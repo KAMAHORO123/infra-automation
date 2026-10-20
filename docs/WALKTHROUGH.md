@@ -43,6 +43,7 @@ It ends with `Forwarding from 127.0.0.1:8081`. Then, in a second terminal:
 kubectl get nodes                                    # rssb, rssb-m02, rssb-m03: Ready
 kubectl -n argocd get applications                   # all Synced / Healthy
 kubectl -n argocd port-forward svc/argocd-server 8443:443        # terminal 3: Argo CD UI
+./webhook-relay.sh               # terminal 4: GitHub webhook -> Argo CD (sync in ~4 s, not ~3 min)
 ./monitoring.sh on               # ONLY if you will show Grafana; give it 10 minutes
 ```
 
