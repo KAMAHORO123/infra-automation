@@ -21,10 +21,11 @@ DB_CONTAINER=rssb-pilot-app-postgres-1
 minikube start -p rssb --nodes 3 --cni=calico --memory=2900 --cpus=2 --subnet="$SUBNET"
 kubectl config use-context rssb
 
-# Nodes are Docker containers: raise their CPU/memory CAPS (not reservations)
-# so busy moments (Argo CD + monitoring starting) do not starve the API server.
+# Nodes are Docker containers: set their CPU/memory CAPS (not reservations).
+# 3 x 2.9 GB must stay well under Docker's 10 GB, or the VM itself runs out of
+# memory and thrashes (load 130+, API timeouts).
 for node in rssb rssb-m02 rssb-m03; do
-  docker update --cpus 3 --memory 3300m --memory-swap 3300m "$node" > /dev/null
+  docker update --cpus 3 --memory 2900m --memory-swap 2900m "$node" > /dev/null
 done
 kubectl wait --for=condition=Ready nodes --all --timeout=900s
 
