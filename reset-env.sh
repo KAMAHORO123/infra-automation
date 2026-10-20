@@ -5,8 +5,9 @@
 #
 #   ./reset-env.sh uat|staging
 #
-# Drops and recreates the environment's database, then asks Argo CD to sync the
-# backend: its PreSync hook re-runs migrations and loads the seed data.
+# Drops and recreates the environment's database, then deletes the migration
+# Job: Argo CD self-heal recreates it from Git (wave -1), which re-runs the
+# migrations and loads the seed data.
 set -euo pipefail
 
 ENV="${1:-}"
@@ -27,7 +28,9 @@ REVOKE CONNECT ON DATABASE logistics_$ENV FROM PUBLIC;
 SQL
 echo "logistics_$ENV recreated (empty)."
 
-# Same as pressing SYNC in the Argo CD UI.
-kubectl -n argocd patch application "rssb-pilot-backend-$ENV" --type merge \
-  -p '{"operation":{"initiatedBy":{"username":"reset-env.sh"},"sync":{"revision":"main"}}}'
-echo "Argo CD sync requested: migrations and seed data run as the PreSync hook."
+# Argo CD (self-heal) notices the Job is missing and recreates it from Git.
+kubectl -n "$ENV" delete job rssb-pilot-backend-migrate --ignore-not-found
+echo "Migration Job deleted: Argo CD recreates it, re-running migrations and seed data."
+kubectl -n "$ENV" wait --for=create job/rssb-pilot-backend-migrate --timeout=300s
+kubectl -n "$ENV" wait --for=condition=complete job/rssb-pilot-backend-migrate --timeout=900s
+echo "Done: logistics_$ENV is back to its seeded state."

@@ -1,44 +1,26 @@
-# rssb-infra
+# infra-automation
 
-**Start here:** [docs/WALKTHROUGH.md](docs/WALKTHROUGH.md) explains every repo and how to test each part.
+Stand-in for RSSB's **`infra-automation`** repository (plan v3.2 §5.3, D23): how the
+cluster itself is built. In RSSB this is the Ansible MicroK8s role (inventories
+`pdc`/`dr`); in this laptop simulation minikube plays the three VMs.
 
-How the RSSB platform simulation is built (proposal 6, 7.4). In production this
-repo would hold Terraform (VMs) and Ansible (MicroK8s); locally, minikube plays
-the three VMs.
-
-| File | Stage (proposal 6.2) | What it does |
+| File | Stage (plan 6.2) | What it does |
 |---|---|---|
-| `cluster-up.sh` | 1-3 Machines, cluster, add-ons | Creates or starts the 3-node cluster (1 control plane + 2 workers, pinned subnet), attaches external PostgreSQL, restores MetalLB and the ingress LoadBalancer, opens the ingress on :8081 |
-| `bootstrap.sh` | 4 Bootstrap | Installs pinned Argo CD and Sealed Secrets, applies our Argo CD settings, then the root application |
-| `root-app.yaml` | 4 Bootstrap | The only object applied by hand: Argo CD reads `argocd/` in rssb-config and builds everything else |
-| `argocd-cm-patch.yaml` | 4 Bootstrap | Argo CD settings that differ from the defaults (EndpointSlices are managed) |
+| `cluster-up.sh` | 1–3: machines, cluster, add-ons | Creates/starts the 3-node cluster (1 control plane + 2 workers, pinned subnet), attaches the external PostgreSQL, restores MetalLB and the ingress, opens the ingress on :8081 |
+| `reset-env.sh uat\|staging` | operations | Recreates an environment's database; Argo CD re-runs migrations and seed. Refuses production |
+| `preload-images.sh` | operations | Downloads images once and copies them into every node (slow links; laptop stand-in for a registry mirror) |
+| `docs/WALKTHROUGH.md` | — | **Start here**: how everything fits together and how to demonstrate it |
+
+The other two platform repos:
+
+| Repo | Holds |
+|---|---|
+| [platform-gitops](https://github.com/KAMAHORO123/platform-gitops) | `bootstrap/` (Argo CD, Sealed Secrets, root app), `apps/*/base + envs/*`, `infra/` |
+| [rssb-devops](https://github.com/KAMAHORO123/rssb-devops) | Reusable workflows (security gates, build once, digest promotion), onboarding kit |
 
 ## Rebuild from nothing
 
 ```bash
-./cluster-up.sh      # in one terminal (ends by port-forwarding the ingress)
-./bootstrap.sh       # in another
+./cluster-up.sh                                   # this repo
+../platform-gitops/bootstrap/bootstrap.sh         # once per new cluster
 ```
-
-Then wait for Argo CD: UAT and staging sync automatically; production waits
-for a manual Sync. Sealed secrets only decrypt with the cluster key they were
-sealed for, so a brand-new cluster needs them re-sealed (or the key restored
-from backup).
-
-## Onboard another application (one command)
-
-```bash
-onboard/onboard-app.sh --name orders-api --type nestjs \
-  --app-dir ~/code/orders-api --config-dir ../rssb-config [--port 3000] [--database]
-```
-
-Adds a hardened Dockerfile, security-gated CI/CD workflows and Dependabot to the
-app repo, and `apps/<name>/values*.yaml` to the config repo. The ApplicationSets
-deploy every `apps/*` folder to uat, staging and production automatically.
-
-## Other scripts
-
-| Script | Use |
-|---|---|
-| `reset-env.sh uat\|staging` | Recreate an environment's database; migrations and seed data run again through Argo CD |
-| `preload-images.sh [IMAGE…]` | Download images once and copy them into every node (slow links) |
